@@ -20,7 +20,7 @@
 
 void isr_func (void* irq_arg)
 {
-   printf ("\n%s: GPIO pin %d interrupt occurred\n", __func__, (int)irq_arg);
+   printf ("\n%s: GPIO pin %p interrupt occurred\n", __func__, irq_arg);
 }
 
 /****************************************************************
@@ -36,7 +36,7 @@ int main (int argc, char ** argv)
       exit (-1);
    }
 
-   _iolink_setup_int (atoi (argv[1]), isr_func, atoi (argv[1]));
+   _iolink_setup_int (atoi (argv[1]), isr_func, (void*)(intptr_t)atoi (argv[1]));
 
    while (true)
    {

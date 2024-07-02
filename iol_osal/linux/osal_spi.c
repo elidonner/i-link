@@ -14,12 +14,12 @@ void * _iolink_pl_hw_spi_init (const char * spi_slave_name)
    {
       return NULL;
    }
-   return (void *)fd;
+   return (void *)(intptr_t)fd;
 }
 
 void _iolink_pl_hw_spi_close (void * fd)
 {
-   close ((int)fd);
+   close ((int)(intptr_t)fd);
 }
 
 void _iolink_pl_hw_spi_transfer (
@@ -28,7 +28,7 @@ void _iolink_pl_hw_spi_transfer (
    const void * data_written,
    size_t n_bytes_to_transfer)
 {
-   int spi_fd = (int)fd;
+   int spi_fd = (int)(intptr_t)fd;
    // TODO
    int delay = 100;
    int speed = 4 * 1000 * 1000;

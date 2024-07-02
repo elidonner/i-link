@@ -161,7 +161,7 @@ typedef enum
    IOLINK_MSEQTYPE_TYPE_2_3  = 0x23,
    IOLINK_MSEQTYPE_TYPE_2_4  = 0x24,
    IOLINK_MSEQTYPE_TYPE_2_5  = 0x25,
-   // IOLINK_MSEQTYPE_TYPE_2_6   = 0x26,
+   IOLINK_MSEQTYPE_TYPE_2_6  = 0x26, /**< removed from spec in 1.1.3, but some legacy devices use it */
    IOLINK_MSEQTYPE_TYPE_2_V = 0x2E,
    IOLINK_MSEQTYPE_TYPE_2_X = 0x2F,
 } iolink_msequencetype_t;

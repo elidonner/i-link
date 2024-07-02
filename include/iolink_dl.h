@@ -325,6 +325,7 @@ typedef struct iolink_dl
 
    bool dataready;
    bool rxerror;
+   bool txerror;
    bool rxtimeout;
 
 #if IOLINK_HW == IOLINK_HW_MAX14819

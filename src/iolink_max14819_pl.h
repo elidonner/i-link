@@ -55,6 +55,7 @@ typedef struct iolink_14819_drv
    uint32_t pl_flag;
 
    bool wurq_request[MAX14819_NUM_CHANNELS];
+   bool data_ready[MAX14819_NUM_CHANNELS];
    bool is_iolink[MAX14819_NUM_CHANNELS];
    os_mutex_t * exclusive;
 

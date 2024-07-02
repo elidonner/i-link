@@ -866,7 +866,8 @@ static void iolink_dl_message_h_sm_await_reply4 (iolink_port_t * port)
    }
    else if (
       (dl->rxtimeout) || // T7
-      (dl->rxerror))     // T8
+      (dl->rxerror) ||   // T8
+      (dl->txerror))
    {
       start_timer_initcyc (dl);
       dl->message_handler.state = IOL_DL_MH_ST_ERRORHANDLING_5;
@@ -1035,11 +1036,10 @@ static void iolink_dl_message_h_sm_await_reply9 (iolink_port_t * port)
    }
    else if (
       dl->rxtimeout || // T19
-      dl->rxerror)     // T20
+      dl->rxerror ||   // T20
+      dl->txerror)
    {
       start_timer_initcyc (dl);
-      dl->rxtimeout             = false;
-      dl->rxerror               = false;
       dl->message_handler.state = IOL_DL_MH_ST_ERRORHANDLING_10;
    }
    else
@@ -1276,7 +1276,8 @@ static void iolink_dl_message_h_sm_await_reply16 (iolink_port_t * port)
    }
    else if (
       dl->rxtimeout || // T30
-      dl->rxerror)     // T31
+      dl->rxerror ||   // T31
+      dl->txerror)
    {
       LOG_ERROR (
          IOLINK_DL_LOG,
@@ -1285,9 +1286,6 @@ static void iolink_dl_message_h_sm_await_reply16 (iolink_port_t * port)
          iolink_dl_mh_st_literals[dl->message_handler.state],
          (dl->rxtimeout) ? "RXTimeout" : "RXError",
          iolink_get_portnumber (port));
-
-      dl->rxtimeout = false;
-      dl->rxerror   = false;
 
       if (dl->message_handler.retry >= IOLINK_MAX_RETRY) // T33
       {
@@ -3385,14 +3383,61 @@ static void iolink_dl_handle_error (iolink_port_t * port)
    if ((dl->devdly & BIT (7)) != 0) // DelayErr
    {
       dl->rxtimeout = true;
-      iolink_dl_message_h_sm (port);
+      LOG_WARNING (
+         IOLINK_DL_LOG,
+         "%s: Reception timeout: %x\n",
+         __func__,
+         dl->devdly);
    }
-   else if ((dl->cqerr & (BIT (3) | BIT (1) | BIT (0))) != 0) // RChksmEr/FrameErr/ParityErr
+   if ((dl->cqerr & (BIT (3) | BIT (1) | BIT (0))) != 0) // RChksmEr/FrameErr/ParityErr
    {
       dl->rxerror = true;
+      LOG_WARNING (
+         IOLINK_DL_LOG,
+         "%s: Reception error: %x\n",
+         __func__,
+         dl->cqerr);
+   }
+   if ((dl->cqerr & (BIT (7) | BIT (6) | BIT (5) | BIT (4))) != 0) // TransmErrA/TCyclErrA/TChksmErA/TSizeErrA
+   {
+      dl->txerror = true;
+      LOG_WARNING (
+         IOLINK_DL_LOG,
+         "%s: Transmission error: %x\n",
+         __func__,
+         dl->cqerr);
+   }
+   if (dl->rxerror || dl->rxtimeout || dl->txerror)
+   {
       iolink_dl_message_h_sm (port);
+      dl->rxtimeout = false;
+      dl->rxerror = false;
+      dl->txerror = false;
    }
 #endif
+}
+
+static void iolink_dl_handle_timer_timeout (iolink_port_t * port)
+{
+   iolink_dl_t * dl = iolink_get_dl_ctx (port);
+
+   switch (dl->timer_type)
+   {
+   case IOL_DL_TIMER_TINITCYC_MH:
+      LOG_DEBUG (
+         IOLINK_DL_LOG,
+         "%s: TInitcyc timed out. IOL_DL_MH state: %s\n",
+         __func__,
+         iolink_dl_mh_st_literals[dl->message_handler.state]);
+      dl->timer_elapsed = true;
+      iolink_dl_message_h_sm (port);
+      dl->timer_elapsed = false;
+      break;
+   default:
+      break;
+   }
+
+   dl->timer_type = IOL_DL_TIMER_NONE;
 }
 
 /*
@@ -3433,6 +3478,7 @@ static void dl_main (void * arg)
             {
                dl->dataready = true;
                iolink_dl_message_h_sm (port);
+               dl->dataready = false;
             }
          }
 
@@ -3445,6 +3491,7 @@ static void dl_main (void * arg)
          if (dl->triggered_events & IOLINK_PL_EVENT_TXERR)
          {
             // Event handler for transmit error
+            iolink_dl_handle_error (port);
          }
 
          if (dl->triggered_events & IOLINK_PL_EVENT_WURQ)
@@ -3471,25 +3518,7 @@ static void dl_main (void * arg)
          if (dl->triggered_events & IOLINK_DL_EVENT_TIMEOUT)
          {
             // Timer timeout
-            os_event_clr (dl->event, IOLINK_DL_EVENT_TIMEOUT);
-
-            switch (dl->timer_type)
-            {
-            case IOL_DL_TIMER_TINITCYC_MH:
-               LOG_DEBUG (
-                  IOLINK_DL_LOG,
-                  "%s: TInitcyc timed out. IOL_DL_MH state: %s\n",
-                  __func__,
-                  iolink_dl_mh_st_literals[dl->message_handler.state]);
-               dl->timer_elapsed = true;
-               iolink_dl_message_h_sm (port);
-               dl->timer_elapsed = false;
-               break;
-            default:
-               break;
-            }
-
-            dl->timer_type = IOL_DL_TIMER_NONE;
+            iolink_dl_handle_timer_timeout (port);
          }
       }
    }
@@ -3520,6 +3549,7 @@ void iolink_dl_reset (iolink_port_t * port)
    dl->timer_tcyc_elapsed      = false;
    dl->dataready               = false;
    dl->rxerror                 = false;
+   dl->txerror                 = false;
    dl->rxtimeout               = false;
    dl->devdly                  = 0;
    dl->cqerr                   = 0;

@@ -464,8 +464,8 @@ static bool iolink_pl_max14819_set_mode (
       iolink->wurq_request[ch] = false; /* Since we clear CQCTRL_EST_COM */
 
       iol_cfg.SDCI.IntE         = 0xFF;
-      iol_cfg.SDCI.msg_ctrl_val = 0x26;  /* InsChks = 1, RChksEn = 1,
-                                            RMessageRdyEn = 1 */
+      iol_cfg.SDCI.msg_ctrl_val = 0x36;  /* InsChks = 1, RChksEn = 1,
+                                            RMessageRdyEn = 1, TSizeEn = 1 */
       iol_cfg.SDCI.chan_stat_val = 0x40; /* FramerEn */
       iol_cfg.SDCI.cycl_tmr_val  = 0x00;
       iol_cfg.SDCI.dev_del_val   = 0x43; /* BDelay=2, DDelay=1, RpsnsTmrEn=1 */
@@ -563,16 +563,16 @@ static bool iolink_pl_max14819_get_data (
    CC_ASSERT (ch >= MAX14819_CH_MIN);
    CC_ASSERT (ch <= MAX14819_CH_MAX);
    os_mutex_lock (iolink->exclusive);
+
    uint8_t RxBytesAct = iolink_14819_read_register (iolink, reg);
    uint8_t rxbytes = iolink_14819_read_register (iolink, lvlreg);
 
    if (RxBytesAct != rxbytes)
    {
-      LOG_DEBUG (
+      LOG_WARNING (
          IOLINK_PL_LOG,
-         "%s [fd/ch: %d/%d]: RxFIFOLvl (%d) != TxRxData (%d), len = %d\n",
+         "%s [ch: %d]: RxFIFOLvl (%d) != TxRxData (%d), len = %d\n",
          __func__,
-         (int)iolink->fd_spi,
          ch,
          rxbytes,
          RxBytesAct,
@@ -580,6 +580,8 @@ static bool iolink_pl_max14819_get_data (
       uint8_t cqctrl = iolink_14819_read_register (iolink, REG_CQCtrlA + ch);
       cqctrl |= MAX14819_CQCTRL_RX_FIFO_RST;
       iolink_14819_write_register (iolink, REG_CQCtrlA + ch, cqctrl);
+      iolink->data_ready[ch] = false;
+      os_mutex_unlock (iolink->exclusive);
       return false;
    }
 
@@ -587,24 +589,25 @@ static bool iolink_pl_max14819_get_data (
    {
       LOG_ERROR (
          IOLINK_PL_LOG,
-         "%s [fd/ch: %d/%d]: Read buffer too small. Needed: %d. Actual: %d",
+         "%s [ch: %d]: Read buffer too small. Needed: %d. Actual: %d",
          __func__,
-         (int)iolink->fd_spi,
          ch,
          rxbytes,
          len);
       rxbytes = len;
    }
 
+   uint32_t inband = 0;
    if (rxbytes > 0)
    {
-      uint8_t inband = iolink_14819_burst_read_rx (iolink, ch, rxdata, rxbytes);
+      inband = iolink_14819_burst_read_rx (iolink, ch, rxdata, rxbytes);
       if ((inband & MAX14819_SPI_INBAND_IRQ) != 0)
       {
-         iolink_pl_max14819_pl_handler ((iolink_hw_drv_t *)iolink, (void *)ch);
+         os_event_set (iolink->dl_event[ch], iolink->pl_flag);
       }
    }
 
+   iolink->data_ready[ch] = false;
    os_mutex_unlock (iolink->exclusive);
 
    return (rxbytes > 0);
@@ -763,7 +766,11 @@ static void iolink_pl_max14819_pl_handler (iolink_hw_drv_t * iolink_hw, void * a
       }
       if (reg & (MAX14819_INTERRUPT_RX_DATA_RDY_A << ch))
       {
-         os_event_set (iolink->dl_event[ch], IOLINK_PL_EVENT_RXRDY);
+         if (!iolink->data_ready[ch])
+         {
+            iolink->data_ready[ch] = true;
+            os_event_set (iolink->dl_event[ch], IOLINK_PL_EVENT_RXRDY);
+         }
       }
    }
    os_mutex_unlock (iolink->exclusive);
@@ -842,6 +849,7 @@ iolink_hw_drv_t * iolink_14819_init (const iolink_14819_cfg_t * cfg)
 
    if (iolink->fd_spi == NULL)
    {
+      LOG_ERROR (IOLINK_PL_LOG, "PL: Unable to open spi device: %s\n", cfg->spi_slave_name);
       free (iolink);
       return NULL;
    }

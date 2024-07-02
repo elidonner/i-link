@@ -135,10 +135,12 @@ int main (int argc, char ** argv)
 
 #ifdef IOLINK_APP_CHIP0_SPI
    hw[0] = main_14819_init("/iolink0", &iol_14819_0_cfg, IOLINK_APP_CHIP0_IRQ);
+   CC_ASSERT (hw[0] != NULL);
 #endif
 
 #ifdef IOLINK_APP_CHIP1_SPI
    hw[1] = main_14819_init("/iolink1", &iol_14819_1_cfg, IOLINK_APP_CHIP1_IRQ);
+   CC_ASSERT (hw[1] != NULL);
 #endif
 
    iolink_port_cfg_t port_cfgs[] = {

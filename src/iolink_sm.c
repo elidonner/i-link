@@ -544,6 +544,17 @@ static iolink_error_t sm_DL_SetMode_req_preop_op (
       // SDCI_TC_0288
       ds->ds_enable = false;
    }
+   else if (valuelist.type == IOLINK_MSEQTYPE_TYPE_NONE)
+   {
+      LOG_ERROR (
+         IOLINK_SM_LOG,
+         "SM (%u): unknown msg type: pdin: %d, pdout: %d\n, revid: %d, mscapa: %d",
+         iolink_get_portnumber (port),
+         sm->dev_com.pdi,
+         sm->dev_com.pdo,
+         real_paramlist->revisionid,
+         sm->dev_com.mseq_cap);
+   }
 
    return DL_SetMode_req (port, mode, &valuelist);
 }
@@ -1257,6 +1268,7 @@ static const iolink_fsm_sm_transition_t sm_trans_s14[] = {
 static const iolink_fsm_sm_transition_t sm_trans_s15[] = {
    /* SM_STATE_wait_devmode_cnf Write master devicemode operate and wait for the
       cnf, not in spec */
+   {SM_EVENT_SM_Operate_v10, SM_STATE_SMOperate, sm_smoperate_ind}, /* T12 for v1.0 */
    {SM_EVENT_SM_Operate, SM_STATE_SMOperate, sm_smoperate_ind}, /* T12 */
    {SM_EVENT_CNF_COMLOST, SM_STATE_PortInactive, sm_comlost},   /* T3  */
 
@@ -1512,6 +1524,16 @@ static iolink_error_t populate_valuelist (
                      cycbyte,
                      IOLINK_MSEQTYPE_TYPE_2_5);
                }
+               else if ((pdin == 16) && (pdout == 16))  /* Not in spec for legacy devices, exist in the wild */
+               {
+                  set_valuelist (
+                     valuelist,
+                     1,
+                     2,
+                     2,
+                     cycbyte,
+                     IOLINK_MSEQTYPE_TYPE_2_6);
+               }
             }
          }
       }
@@ -1684,7 +1706,13 @@ static void sm_AL_Read_cnf_cb (iolink_job_t * job)
    iolink_sm_port_t * sm                       = iolink_get_sm_ctx (port);
    iolink_smp_parameterlist_t * real_paramlist = &sm->real_paramlist;
 
-   if (job->al_read_cnf.errortype != IOLINK_SMI_ERRORTYPE_NONE)
+   if(job->al_read_cnf.errortype == IOLINK_SMI_ERRORTYPE_IDX_NOTAVAIL)
+   {
+       memset (real_paramlist->serialnumber, 0, sizeof (real_paramlist->serialnumber));
+       sm_check_sernum (port, true);
+   }
+
+   else if (job->al_read_cnf.errortype != IOLINK_SMI_ERRORTYPE_NONE)
    {
       iolink_sm_event (
          port,
@@ -2001,15 +2029,29 @@ static void sm_DL_Read_cnf_cb (iolink_job_t * job)
 #define MIN_CYCL_TIME_1   92
 #define MIN_CYCL_TIME_2_3 79
 #define FOUR_MS           40
+#define MIN_CYCL_TIME_32MS 0x80
 
       uint8_t mincycletime = (sm->comrate == IOLINK_MHMODE_COM1)
                                 ? MIN_CYCL_TIME_1
                                 : MIN_CYCL_TIME_2_3;
+
 #ifndef UNIT_TEST
       static uint8_t older_cycletime;
       uint8_t old_cycletime = real_paramlist->cycletime;
 #endif
       uint8_t new_cycletime     = (value < mincycletime) ? mincycletime : value;
+
+#ifdef IOLINKMASTER_USB_MODE_ENABLE
+      if (new_cycletime < MIN_CYCL_TIME_32MS)
+      {
+         new_cycletime = MIN_CYCL_TIME_32MS;
+         LOG_DEBUG (
+            IOLINK_SM_LOG,
+            "SM: reducing cycle time to %x due to slow os/interface\n",
+            new_cycletime);
+      }
+#endif
+
       real_paramlist->cycletime = new_cycletime;
 #ifndef UNIT_TEST
       if (
@@ -2124,14 +2166,18 @@ static void sm_DL_Write_Devmode_cnf (iolink_job_t * job)
 {
    iolink_port_t * port  = job->port;
    iolink_sm_port_t * sm = iolink_get_sm_ctx (port);
+   iolink_smp_parameterlist_t * real_paramlist = &sm->real_paramlist;
 
    if (job->dl_write_devicemode_cnf.errorinfo == IOLINK_STATUS_NO_ERROR)
    {
       if (sm->state == SM_STATE_wait_devmode_cnf)
       {
          sm_DL_SetMode_req_operate (port);
-         iolink_sm_event (port, SM_EVENT_SM_Operate); /* T12 */
-
+         iolink_sm_event (
+            port,
+            (real_paramlist->revisionid == IOL_DIR_PARAM_REV_V10)
+            ? SM_EVENT_SM_Operate_v10
+            : SM_EVENT_SM_Operate); /* T12 */
          return;
       }
       else if (sm->state == SM_STATE_waitForFallback)

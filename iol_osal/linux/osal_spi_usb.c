@@ -17,6 +17,7 @@
 #define WRITE_TIMEOUT_MS         100
 #define LATENCY                  1
 #define DEFAULT_SLEEP_TIME       2
+#define INIT_SLEEP_USEC          200 * 1000
 
 /* Specific commands and operations to the D2XX library */
 #define MPSSE_CMD_SET_DATA_BITS_LOWBYTE          0x80
@@ -201,11 +202,76 @@ static uint32_t mpsse_setup (void * ftdi_handle)
    return status;
 }
 
+static void list_devices (void)
+{
+   FT_STATUS status;
+   FT_DEVICE_LIST_INFO_NODE * info = NULL;
+   DWORD n_devs = 0;
+   int i;
+
+   /* Discover how many FTDI devices are connected */
+   status = FT_CreateDeviceInfoList (&n_devs);
+   if (status != FT_OK)
+   {
+      LOG_ERROR (
+         IOLINK_APP_LOG,
+         "APP: %s: FT_CreateDeviceInfoList failed (error code %d)\n",
+         __func__,
+         (int)status);
+      goto exit;
+   }
+
+   if (n_devs == 0)
+   {
+      LOG_ERROR (IOLINK_APP_LOG, "APP: %s: no devices connected\n", __func__);
+      goto exit;
+   }
+
+   /* Allocate storage */
+   info = calloc ((size_t)n_devs, sizeof (FT_DEVICE_LIST_INFO_NODE));
+   if (info == NULL)
+   {
+      LOG_ERROR (IOLINK_APP_LOG, "APP: %s: Allocation failure.\n", __func__);
+      goto exit;
+   }
+
+   /* Populate the list of info nodes */
+   status = FT_GetDeviceInfoList (info, &n_devs);
+   if (status != FT_OK)
+   {
+      LOG_ERROR (
+         IOLINK_APP_LOG,
+         "APP: %s: FT_GetDeviceInfoList failed (error code %d)\n",
+         __func__,
+         (int)status);
+
+      goto exit;
+   }
+
+   /* Display info (including EEPROM fields) for each connected FTDI device */
+   for (i = 0; i < (int)n_devs; i++)
+   {
+      LOG_INFO (IOLINK_APP_LOG, "Device %d:\n", i);
+      LOG_INFO (IOLINK_APP_LOG, "  Flags = 0x%x\n", info[i].Flags);
+      LOG_INFO (IOLINK_APP_LOG, "  Type = 0x%x\n", info[i].Type);
+      LOG_INFO (IOLINK_APP_LOG, "  ID = 0x%04x\n", info[i].ID);
+      LOG_INFO (IOLINK_APP_LOG, "  LocId = 0x%x\n", info[i].LocId);
+      LOG_INFO (IOLINK_APP_LOG, "  SerialNumber = %s\n", info[i].SerialNumber);
+      LOG_INFO (IOLINK_APP_LOG, "  Description = %s\n", info[i].Description);
+      LOG_INFO (IOLINK_APP_LOG, "  ftHandle = %p\n", info[i].ftHandle);
+   }
+
+exit:
+   free (info);
+}
+
 void * _iolink_pl_hw_spi_init (const char * spi_slave_name)
 {
    ftdi_io_mutex = os_mutex_create();
    void * ftdi_handle;
    uint32_t status = 0;
+
+   list_devices();
 
    /* TODO: This function supports opening multiple devices by setting
       deviceNumber to 0, 1, etc. However, it does not provide the capability to
@@ -235,6 +301,7 @@ void * _iolink_pl_hw_spi_init (const char * spi_slave_name)
       os_mutex_destroy (ftdi_io_mutex);
       return NULL;
    }
+   os_usleep(INIT_SLEEP_USEC);
 
    return ftdi_handle;
 }
